@@ -21,10 +21,10 @@ use crate::calendar;
 pub const WM_NET_UPDATE: u32 = WM_APP + 6;
 
 pub const DEFAULT_FEED: &str = "https://lenta.ru/rss/news";
-const WEATHER_EVERY: Duration = Duration::from_secs(30 * 60);
+pub const WEATHER_EVERY: Duration = Duration::from_secs(30 * 60);
 const NEWS_EVERY: Duration = Duration::from_secs(15 * 60);
 /// After a failed fetch, try again this soon instead of waiting a full period.
-const RETRY_AFTER: Duration = Duration::from_secs(2 * 60);
+pub const RETRY_AFTER: Duration = Duration::from_secs(2 * 60);
 const MAX_HEADLINES: u32 = 8;
 
 #[derive(Clone)]
@@ -187,7 +187,7 @@ fn check(handle: *mut c_void) -> Result<Handle> {
 /// fails the TLS handshake with Open-Meteo (0x80072F8F) where the system TLS
 /// stack is fine. Responses are small, so no compression is requested: WinHTTP's
 /// automatic decompression aborts on Open-Meteo's gzip responses.
-fn get(url: &str) -> Result<String> {
+pub fn get(url: &str) -> Result<String> {
     let (secure, rest) = match url.split_once("://") {
         Some(("https", rest)) => (true, rest),
         Some((_, rest)) => (false, rest),
@@ -256,7 +256,7 @@ fn locate() -> Result<Location> {
 
 /// Coordinates of a city by name (Open-Meteo's geocoding, free, no key). The
 /// location keeps the name as typed, so the next start knows it's resolved.
-fn geocode(city: &str) -> Result<Location> {
+pub fn geocode(city: &str) -> Result<Location> {
     let name: String = city
         .bytes()
         .map(|b| if b.is_ascii_alphanumeric() { (b as char).to_string() } else { format!("%{b:02X}") })
@@ -267,7 +267,7 @@ fn geocode(city: &str) -> Result<Location> {
     Ok(Location { lat: first.GetNamedNumber(&h("latitude"))?, lon: first.GetNamedNumber(&h("longitude"))?, city: city.to_owned() })
 }
 
-fn fetch_weather(location: &Location) -> Result<Weather> {
+pub fn fetch_weather(location: &Location) -> Result<Weather> {
     let url = format!(
         "https://api.open-meteo.com/v1/forecast?latitude={:.4}&longitude={:.4}\
          &current=temperature_2m,weather_code,is_day\

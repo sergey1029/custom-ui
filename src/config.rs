@@ -28,13 +28,14 @@ pub struct Setting {
     pub default: &'static str,
 }
 
-pub const SECTIONS: [(&str, &str); 6] = [
+pub const SECTIONS: [(&str, &str); 7] = [
     ("general", "Основные"),
     ("appearance", "Оформление"),
     ("menubar", "Строка меню"),
     ("dock", "Dock"),
     ("desktop", "Рабочий стол"),
     ("search", "Поиск и Launchpad"),
+    ("casescreen", "Экран на корпусе"),
 ];
 
 const fn setting(key: &'static str, section: &'static str, label: &'static str, hint: &'static str, kind: Kind, default: &'static str) -> Setting {
@@ -108,6 +109,19 @@ pub const SETTINGS: &[Setting] = &[
         Kind::Choice(&[("grid", "Сетка как в macOS"), ("honeycomb", "Соты как в Apple Watch")]),
         "grid",
     ),
+    // Case screen
+    setting(
+        "casescreen.enabled",
+        "casescreen",
+        "Выводить данные на экран корпуса",
+        "Цифровой дисплей HT PLAYER; сам HT PLAYER при этом должен быть закрыт. Температуры — из LibreHardwareMonitor (веб-сервер, порт 8085)",
+        Kind::Bool,
+        "1",
+    ),
+    setting("casescreen.weather", "casescreen", "Погода в первом поле", "По очереди с температурой CPU; мороз — без минуса", Kind::Bool, "1"),
+    setting("casescreen.city", "casescreen", "Город", "Пусто — как у виджета погоды на рабочем столе", Kind::Text, ""),
+    setting("casescreen.stats_seconds", "casescreen", "Сколько показывать CPU", "", range(3, 60, 1, " с"), "10"),
+    setting("casescreen.weather_seconds", "casescreen", "Сколько показывать погоду", "", range(2, 30, 1, " с"), "5"),
 ];
 
 pub fn find(key: &str) -> Option<&'static Setting> {

@@ -4,6 +4,7 @@ mod appbar;
 mod appmenu;
 mod apps;
 mod calendar;
+mod casescreen;
 // The settings table and its helpers are shared with the settings app, which uses more of them.
 #[allow(dead_code)]
 mod config;
@@ -99,6 +100,8 @@ fn run() -> Result<()> {
     calendar::create()?;
     desktop::create()?;
     shelves::create()?;
+    // After the desktop: it starts the weather fetching the display shows.
+    casescreen::start();
     unsafe {
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
