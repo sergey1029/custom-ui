@@ -23,7 +23,6 @@ const WEATHER_H: f32 = 158.0;
 const NEWS_W: f32 = 330.0;
 const NEWS_HEADER: f32 = 40.0;
 const NEWS_ROW: f32 = 46.0;
-const NEWS_ROWS: usize = 4;
 const WIDGET_RADIUS: f32 = 22.0;
 const MARGIN: f32 = 24.0;
 const SPACING: f32 = 16.0;
@@ -348,10 +347,15 @@ fn save(s: &State) {
 
 // ---- drawing ----
 
+/// Headlines the news widget shows, as set.
+fn news_rows() -> usize {
+    config::int("news.rows") as usize
+}
+
 fn widget_size(widget: Widget) -> (i32, i32) {
     let (w, h) = match widget {
         Widget::Weather => (WEATHER_W, WEATHER_H),
-        Widget::News => (NEWS_W, NEWS_HEADER + NEWS_ROW * NEWS_ROWS as f32 + 12.0),
+        Widget::News => (NEWS_W, NEWS_HEADER + NEWS_ROW * news_rows() as f32 + 12.0),
     };
     (px(w), px(h))
 }
@@ -469,7 +473,7 @@ unsafe fn draw_news(canvas: &mut Canvas, fonts: &Fonts, news: Option<&net::News>
             SelectObject(dc, fonts.small);
             SetTextColor(dc, COLOR_DIM);
             gfx::draw_text(dc, &news.source, &header, DT_RIGHT);
-            for (i, headline) in news.items.iter().take(NEWS_ROWS).enumerate() {
+            for (i, headline) in news.items.iter().take(news_rows()).enumerate() {
                 let r = news_row(i, canvas.width);
                 if hover == Some(i) {
                     gfx::fill_round(dc, &r, COLOR_ROW_HOVER, px(24.0));
@@ -614,7 +618,7 @@ unsafe fn on_item_move(hwnd: HWND, local: POINT) {
 }
 
 fn headline_at(width: i32, p: POINT) -> Option<usize> {
-    let count = net::news().map_or(0, |n| n.items.len().min(NEWS_ROWS));
+    let count = net::news().map_or(0, |n| n.items.len().min(news_rows()));
     (0..count).find(|&i| {
         let r = news_row(i, width);
         p.x >= r.left && p.x < r.right && p.y >= r.top && p.y < r.bottom

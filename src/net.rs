@@ -15,14 +15,13 @@ use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::System::WinRT::{RoInitialize, RO_INIT_MULTITHREADED};
 use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_APP};
 
-use crate::calendar;
+use crate::{calendar, config};
 
 /// Posted to the desktop when new weather or news data is in.
 pub const WM_NET_UPDATE: u32 = WM_APP + 6;
 
 pub const DEFAULT_FEED: &str = "https://lenta.ru/rss/news";
 pub const WEATHER_EVERY: Duration = Duration::from_secs(30 * 60);
-const NEWS_EVERY: Duration = Duration::from_secs(15 * 60);
 /// After a failed fetch, try again this soon instead of waiting a full period.
 pub const RETRY_AFTER: Duration = Duration::from_secs(2 * 60);
 const MAX_HEADLINES: u32 = 8;
@@ -133,7 +132,7 @@ pub fn start(notify: HWND, location: Option<Location>, feed: String, city: Strin
                 match fetch_news(&feed) {
                     Ok(news) => {
                         *NEWS.lock().unwrap() = Some(news);
-                        news_due = now + NEWS_EVERY;
+                        news_due = now + Duration::from_secs(config::int("news.refresh") as u64 * 60);
                         changed = true;
                     }
                     Err(_) => news_due = now + RETRY_AFTER,

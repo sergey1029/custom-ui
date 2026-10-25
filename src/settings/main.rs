@@ -72,12 +72,13 @@ const COLOR_SIDE_SELECTED: COLORREF = rgb(66, 66, 74);
 /// macOS's accent choices, plus graphite.
 const ACCENTS: [&str; 8] = ["0062E1", "A550A7", "F74F9E", "FF5257", "F7821B", "FFC600", "62BA46", "8C8C8C"];
 /// Sidebar icon glyph (Segoe Fluent Icons) and tile color per section.
-const SECTION_ICONS: [(&str, COLORREF); 7] = [
+const SECTION_ICONS: [(&str, COLORREF); 8] = [
     ("\u{E713}", rgb(142, 142, 147)),
     ("\u{E790}", rgb(175, 82, 222)),
     ("\u{E8A0}", rgb(10, 132, 255)),
     ("\u{E7C4}", rgb(48, 176, 199)),
     ("\u{E7F4}", rgb(52, 199, 89)),
+    ("\u{E909}", rgb(88, 86, 214)),
     ("\u{E721}", rgb(255, 149, 0)),
     ("\u{E950}", rgb(255, 59, 48)),
 ];

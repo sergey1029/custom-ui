@@ -28,12 +28,13 @@ pub struct Setting {
     pub default: &'static str,
 }
 
-pub const SECTIONS: [(&str, &str); 7] = [
+pub const SECTIONS: [(&str, &str); 8] = [
     ("general", "Основные"),
     ("appearance", "Оформление"),
     ("menubar", "Строка меню"),
     ("dock", "Dock"),
     ("desktop", "Рабочий стол"),
+    ("feeds", "Погода и новости"),
     ("search", "Поиск и Launchpad"),
     ("casescreen", "Экран на корпусе"),
 ];
@@ -88,9 +89,13 @@ pub const SETTINGS: &[Setting] = &[
     // Desktop
     setting("shelves.enabled", "desktop", "Полки рабочего стола", "Файлы со стола — в боковой панели по стрелке слева; значки Проводника скрыты", Kind::Bool, "1"),
     setting("widget.weather", "desktop", "Виджет погоды", "", Kind::Bool, "1"),
-    setting("weather.city", "desktop", "Город для погоды", "Пусто — по IP или как уже сохранено", Kind::Text, ""),
     setting("widget.news", "desktop", "Виджет новостей", "", Kind::Bool, "1"),
-    setting("news.feed", "desktop", "Лента новостей (RSS)", "Адрес любой RSS-ленты", Kind::Text, "https://lenta.ru/rss/news"),
+    // Weather & news
+    setting("weather.city", "feeds", "Город для погоды", "Пусто — по IP или как уже сохранено", Kind::Text, ""),
+    setting("casescreen.city", "feeds", "Город для экрана корпуса", "Пусто — тот же, что для погоды", Kind::Text, ""),
+    setting("news.feed", "feeds", "Лента новостей (RSS)", "Адрес любой RSS-ленты", Kind::Text, "https://lenta.ru/rss/news"),
+    setting("news.rows", "feeds", "Заголовков в виджете", "", range(2, 8, 1, ""), "4"),
+    setting("news.refresh", "feeds", "Обновлять новости", "", range(5, 120, 5, " мин"), "15"),
     // Search & Launchpad
     setting("spotlight.files", "search", "Искать файлы в Spotlight", "По индексу Windows Search в папке пользователя", Kind::Bool, "1"),
     setting(
@@ -119,7 +124,6 @@ pub const SETTINGS: &[Setting] = &[
         "1",
     ),
     setting("casescreen.weather", "casescreen", "Погода в первом поле", "По очереди с температурой CPU; мороз — без минуса", Kind::Bool, "1"),
-    setting("casescreen.city", "casescreen", "Город", "Пусто — как у виджета погоды на рабочем столе", Kind::Text, ""),
     setting("casescreen.stats_seconds", "casescreen", "Сколько показывать CPU", "", range(3, 60, 1, " с"), "10"),
     setting("casescreen.weather_seconds", "casescreen", "Сколько показывать погоду", "", range(2, 30, 1, " с"), "5"),
 ];
