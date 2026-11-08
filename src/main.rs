@@ -10,6 +10,7 @@ mod casescreen;
 mod config;
 mod controlcenter;
 mod coucou;
+mod island;
 mod desktop;
 mod dock;
 mod filesearch;

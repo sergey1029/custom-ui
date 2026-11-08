@@ -1,7 +1,8 @@
 //! The menu bar, as on a Mac: a full-width strip of frosted glass along the top
-//! (the wallpaper blurred and tinted), with a notch in the middle where the
-//! Coucou bubble sits, like a MacBook's. Left: the system menu, the front app's
-//! bold name and its menus. Right of the notch: the playing track. Right: the
+//! (the wallpaper blurred and tinted). While Dynamic Island runs, the middle is
+//! kept free and the island sits there like a MacBook's notch (see island.rs).
+//! Left: the system menu, the front app's bold name and its menus. Right of the
+//! middle: the playing track, unless the island shows it. Right: the
 //! tray, keyboard layout, volume, network, battery, Spotlight, Control Center
 //! and the clock.
 //!
@@ -25,15 +26,25 @@ use crate::appmenu::{self, Source, Title};
 use crate::gfx::{self, rgb, Canvas, COLOR_BG, COLOR_DIM, COLOR_TEXT};
 use crate::media::{self, Command, Track};
 use crate::status::{self, Battery, Network, Volume};
-use crate::{appbar, apps, calendar, config, controlcenter, coucou, dock, spotlight, system_taskbar, tasks, tray};
+use crate::{appbar, apps, calendar, config, controlcenter, coucou, dock, island, spotlight, system_taskbar, tasks, tray};
 
 fn bar_height() -> f32 {
     config::int("menubar.height") as f32
 }
 
-/// Configured; Coucou's collapsed bubble is ~288 px wide at the top center, the default leaves a little air around it.
+/// Room kept free in the middle: for Dynamic Island while it runs, for Coucou always
+/// (its bubble shows through a hole there, see coucou.rs).
 fn notch_width() -> f32 {
-    if config::flag("menubar.notch") { config::int("menubar.notch_width") as f32 } else { 0.0 }
+    let wanted = match config::text("menubar.island").as_str() {
+        "dynamic" => island::present(),
+        "coucou" => true,
+        _ => false,
+    };
+    if wanted { config::int("menubar.notch_width") as f32 } else { 0.0 }
+}
+
+fn coucou_mode() -> bool {
+    config::text("menubar.island") == "coucou"
 }
 const MEDIA_WIDTH: f32 = 340.0;
 const EDGE: f32 = 10.0;
@@ -152,12 +163,18 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 refresh(hwnd);
             }
             TIMER_CLOCK => {
-                // Also picks up Coucou if it was started after us.
-                coucou::pin();
                 system_taskbar::enforce();
                 tray::reassert();
                 poll_slow();
-                render(hwnd);
+                // Picks up the island if it was started after us.
+                if coucou_mode() {
+                    coucou::pin();
+                }
+                if island::sync(hwnd) {
+                    refresh(hwnd);
+                } else {
+                    render(hwnd);
+                }
             }
             TIMER_STATUS if poll_fast() => render(hwnd),
             _ => {}
@@ -204,6 +221,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             ABN_FULLSCREENAPP => {
                 let after = if lparam.0 != 0 { HWND_BOTTOM } else { HWND_TOPMOST };
                 let _ = SetWindowPos(hwnd, after, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                if lparam.0 == 0 {
+                    island::stay_below(hwnd);
+                }
             }
             _ => {}
         },
@@ -219,6 +239,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 let _ = UnhookWinEvent(hook);
             }
             coucou::release();
+            island::release(hwnd);
             appbar::unregister(hwnd);
             PostQuitMessage(0);
         }
@@ -301,7 +322,10 @@ unsafe extern "system" fn on_win_event(
 }
 
 unsafe fn refresh(hwnd: HWND) {
-    coucou::pin();
+    island::sync(hwnd);
+    if coucou_mode() {
+        coucou::pin();
+    }
     dock::update(tasks::collect());
     if let Some((window, app)) = front_app() {
         let titles = if config::flag("menubar.app_menus") { appmenu::titles(window) } else { Vec::new() };
@@ -552,7 +576,8 @@ unsafe fn on_click(hwnd: HWND, p: POINT) {
 
 /// The playing track, unless it's turned off in the settings.
 fn now_playing() -> Option<Track> {
-    media::current().filter(|_| config::flag("menubar.now_playing"))
+    // The island shows the track itself.
+    media::current().filter(|_| config::flag("menubar.now_playing") && !(island::docking() && island::present()))
 }
 
 fn clock_text() -> String {
@@ -779,10 +804,15 @@ unsafe fn render(hwnd: HWND) {
         (l, logo, control_center)
     });
 
-    // Everything except the notch is bar; the notch lets the Coucou bubble show.
-    let left = RECT { right: l.notch.left, ..client };
-    let right = RECT { left: l.notch.right, ..client };
-    canvas.mask(&[(left, 0.0), (right, 0.0)]);
+    if coucou_mode() {
+        // Coucou's bubble shows through a hole in the middle.
+        let left = RECT { right: l.notch.left, ..client };
+        let right = RECT { left: l.notch.right, ..client };
+        canvas.mask(&[(left, 0.0), (right, 0.0)]);
+    } else {
+        // All glass: Dynamic Island (if running) sits on top of it, in the free middle.
+        canvas.mask(&[(client, 0.0)]);
+    }
     if let Some(r) = logo {
         draw_logo(&mut canvas, &r, scale);
     }

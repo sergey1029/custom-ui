@@ -28,7 +28,7 @@ pub struct Setting {
     pub default: &'static str,
 }
 
-pub const SECTIONS: [(&str, &str); 8] = [
+pub const SECTIONS: [(&str, &str); 9] = [
     ("general", "Основные"),
     ("appearance", "Оформление"),
     ("menubar", "Строка меню"),
@@ -37,6 +37,8 @@ pub const SECTIONS: [(&str, &str); 8] = [
     ("feeds", "Погода и новости"),
     ("search", "Поиск и Launchpad"),
     ("casescreen", "Экран на корпусе"),
+    // No settings: the settings app draws this page itself.
+    ("about", "О программе"),
 ];
 
 const fn setting(key: &'static str, section: &'static str, label: &'static str, hint: &'static str, kind: Kind, default: &'static str) -> Setting {
@@ -68,10 +70,17 @@ pub const SETTINGS: &[Setting] = &[
     ),
     // Menu bar
     setting("menubar.height", "menubar", "Высота строки меню", "", range(24, 36, 1, " px"), "28"),
-    setting("menubar.notch", "menubar", "Вырез посередине", "Место под пузырь Coucou, как «чёлка» MacBook", Kind::Bool, "1"),
-    setting("menubar.notch_width", "menubar", "Ширина выреза", "", range(160, 420, 4, " px"), "304"),
+    setting(
+        "menubar.island",
+        "menubar",
+        "Остров посередине",
+        "Dynamic Island встаёт как вырез MacBook, Coucou — в вырез",
+        Kind::Choice(&[("dynamic", "Dynamic Island"), ("coucou", "Coucou"), ("none", "Нет")]),
+        "dynamic",
+    ),
+    setting("menubar.notch_width", "menubar", "Место под остров", "Для Coucou хватает 304 px", range(160, 480, 4, " px"), "340"),
     setting("menubar.app_menus", "menubar", "Меню приложения", "«Файл», «Правка», «Вид»… рядом с названием программы", Kind::Bool, "1"),
-    setting("menubar.now_playing", "menubar", "Играющий трек", "Название трека справа от выреза; клик — пауза", Kind::Bool, "1"),
+    setting("menubar.now_playing", "menubar", "Играющий трек", "Название трека посередине; клик — пауза. Пока запущен Dynamic Island, трек показывает он", Kind::Bool, "1"),
     setting("menubar.layout", "menubar", "Раскладка клавиатуры", "", Kind::Bool, "1"),
     setting("menubar.volume", "menubar", "Громкость", "", Kind::Bool, "1"),
     setting("menubar.network", "menubar", "Сеть", "", Kind::Bool, "1"),
@@ -148,7 +157,11 @@ fn parse(text: &str) -> HashMap<String, String> {
 
 /// (Re)reads the file.
 pub fn load() {
-    let values = file().and_then(|f| std::fs::read_to_string(f).ok()).map(|t| parse(&t)).unwrap_or_default();
+    let mut values = file().and_then(|f| std::fs::read_to_string(f).ok()).map(|t| parse(&t)).unwrap_or_default();
+    // Before 1.2 the middle was a yes/no "menubar.notch" (for Coucou).
+    if !values.contains_key("menubar.island") && values.get("menubar.notch").is_some_and(|v| v == "0") {
+        values.insert("menubar.island".to_owned(), "none".to_owned());
+    }
     *VALUES.lock().unwrap() = Some(values);
 }
 

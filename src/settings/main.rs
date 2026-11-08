@@ -30,6 +30,7 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE};
 use windows::Win32::UI::Controls::Dialogs::{ChooseColorW, CC_FULLOPEN, CC_RGBINIT, CHOOSECOLORW};
 use windows::Win32::UI::HiDpi::{GetDpiForWindow, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
+use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -72,7 +73,7 @@ const COLOR_SIDE_SELECTED: COLORREF = rgb(66, 66, 74);
 /// macOS's accent choices, plus graphite.
 const ACCENTS: [&str; 8] = ["0062E1", "A550A7", "F74F9E", "FF5257", "F7821B", "FFC600", "62BA46", "8C8C8C"];
 /// Sidebar icon glyph (Segoe Fluent Icons) and tile color per section.
-const SECTION_ICONS: [(&str, COLORREF); 8] = [
+const SECTION_ICONS: [(&str, COLORREF); 9] = [
     ("\u{E713}", rgb(142, 142, 147)),
     ("\u{E790}", rgb(175, 82, 222)),
     ("\u{E8A0}", rgb(10, 132, 255)),
@@ -81,6 +82,7 @@ const SECTION_ICONS: [(&str, COLORREF); 8] = [
     ("\u{E909}", rgb(88, 86, 214)),
     ("\u{E721}", rgb(255, 149, 0)),
     ("\u{E950}", rgb(255, 59, 48)),
+    ("\u{E946}", rgb(99, 99, 102)),
 ];
 
 const WM_SHELL_RESTARTED: u32 = WM_APP + 1;
@@ -101,6 +103,8 @@ enum Target {
     Reset,
     Apply,
     ShellPower,
+    /// A web page to open (the "О программе" page's buttons).
+    Link(&'static str),
 }
 
 #[derive(Default)]
@@ -569,6 +573,7 @@ unsafe fn on_down(hwnd: HWND, p: POINT) {
             changed(hwnd);
         }
         Target::Apply => apply(hwnd),
+        Target::Link(url) => open_url(url),
         Target::ShellPower => {
             let running = shell_window().is_some();
             STATE.with_borrow_mut(|s| s.status = if running { "Возврат к Windows…" } else { "Запуск оболочки…" }.to_owned());
@@ -578,7 +583,128 @@ unsafe fn on_down(hwnd: HWND, p: POINT) {
     }
 }
 
+const REPO_URL: &str = env!("CARGO_PKG_REPOSITORY");
+const ISLAND_URL: &str = "https://github.com/sergey1029/dynamic-island-windows";
+
+fn open_url(url: &str) {
+    let wide: Vec<u16> = url.encode_utf16().chain([0]).collect();
+    unsafe {
+        ShellExecuteW(HWND::default(), w!("open"), PCWSTR(wide.as_ptr()), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL);
+    }
+}
+
 // ---- drawing ----
+
+/// Height of `text` wrapped to `width` in the DC's current font.
+unsafe fn wrapped_height(dc: HDC, text: &str, width: i32) -> i32 {
+    let mut wide: Vec<u16> = text.encode_utf16().collect();
+    let mut r = RECT { left: 0, top: 0, right: width, bottom: 0 };
+    DrawTextW(dc, &mut wide, &mut r, DT_CALCRECT | DT_WORDBREAK | DT_EDITCONTROL | DT_NOPREFIX);
+    r.bottom
+}
+
+/// "О программе": Custom UI itself, and Dynamic Island, the notch app that goes
+/// with it. Returns the bottom of the page.
+unsafe fn paint_about(
+    canvas: &mut Canvas,
+    (left, right, mut y): (i32, i32, i32),
+    dpi: f32,
+    hover: Option<Target>,
+    (normal, small, bold): (HFONT, HFONT, HFONT),
+    targets: &mut Vec<(RECT, Target)>,
+) -> i32 {
+    let px = |v: f32| (v * dpi).round() as i32;
+    let dc = canvas.dc;
+
+    let island_running = FindWindowW(None, w!("Dynamic Island")).is_ok();
+    let island_status = match (island_running, config::text("menubar.island").as_str()) {
+        (true, "dynamic") => "Запущен и встроен в строку меню",
+        (true, _) => "Запущен; чтобы встроить его в строку меню, выберите его в «Строка меню ▸ Остров посередине»",
+        (false, _) => "Не запущен",
+    };
+    let version = concat!("Версия ", env!("CARGO_PKG_VERSION"), " · бесплатно, лицензия MIT");
+    let blocks: [(bool, &str, &str, &str, &str, &'static str); 2] = [
+        (
+            true,
+            "Custom UI",
+            version,
+            "Оболочка для Windows 11 в стиле macOS: строка меню, Dock, Spotlight, Launchpad, Пункт управления, \
+             календарь, виджеты и полки рабочего стола. Окна программ остаются как есть — меняется только всё вокруг них.",
+            "Открыть на GitHub",
+            REPO_URL,
+        ),
+        (
+            false,
+            "Dynamic Island",
+            island_status,
+            "Отдельная бесплатная программа того же автора, которая хорошо сочетается с Custom UI: живая «пилюля» \
+             вверху экрана, как на iPhone. Музыка с обложкой и перемоткой, уведомления, громкость и зарядка, таймер \
+             и секундомер, события календаря, погода и полка для файлов. С Custom UI остров встраивается в строку \
+             меню, как вырез MacBook, и раскрывается прямо из неё.",
+            "Скачать с GitHub",
+            ISLAND_URL,
+        ),
+    ];
+
+    let pad = px(18.0);
+    let icon = px(48.0);
+    for (is_shell, name, sub, body, button_label, url) in blocks {
+        let text_left = left + pad + icon + px(16.0);
+        let text_right = right - pad;
+        SelectObject(dc, normal);
+        let body_h = wrapped_height(dc, body, text_right - text_left);
+        let height = pad + px(22.0) + px(20.0) + px(8.0) + body_h + px(14.0) + px(CONTROL_H) + pad;
+        let card = RECT { left, top: y, right, bottom: y + height };
+        canvas.fill_shape(&card, CARD_RADIUS * dpi, COLOR_CARD, 255);
+        canvas.stroke_shape(&card, CARD_RADIUS * dpi, rgb(255, 255, 255), 14);
+
+        let tile = RECT { left: left + pad, top: y + pad, right: left + pad + icon, bottom: y + pad + icon };
+        if is_shell {
+            let instance = GetModuleHandleW(None).unwrap_or_default();
+            if let Ok(image) = LoadImageW(instance, APP_ICON, IMAGE_ICON, icon, icon, LR_DEFAULTCOLOR) {
+                let _ = DrawIconEx(dc, tile.left, tile.top, HICON(image.0), icon, icon, 0, None, DI_NORMAL);
+                let _ = DestroyIcon(HICON(image.0));
+            }
+        } else {
+            // The island itself: a black pill on an indigo tile.
+            canvas.fill_shape(&tile, 11.0 * dpi, rgb(94, 92, 230), 255);
+            let pill = RECT { left: tile.left + px(9.0), top: tile.top + px(9.0), right: tile.right - px(9.0), bottom: tile.top + px(21.0) };
+            canvas.fill_shape(&pill, 6.0 * dpi, rgb(0, 0, 0), 255);
+        }
+
+        let mut ty = y + pad;
+        SelectObject(dc, bold);
+        SetTextColor(dc, COLOR_TEXT);
+        gfx::draw_text(dc, name, &RECT { left: text_left, top: ty, right: text_right, bottom: ty + px(22.0) }, DT_LEFT);
+        ty += px(22.0);
+        SelectObject(dc, small);
+        SetTextColor(dc, COLOR_DIM);
+        gfx::draw_text(dc, sub, &RECT { left: text_left, top: ty, right: text_right, bottom: ty + px(20.0) }, DT_LEFT | DT_END_ELLIPSIS);
+        ty += px(20.0) + px(8.0);
+        SelectObject(dc, normal);
+        SetTextColor(dc, COLOR_TEXT);
+        gfx::draw_text_wrapped(dc, body, &RECT { left: text_left, top: ty, right: text_right, bottom: ty + body_h });
+        ty += body_h + px(14.0);
+
+        let target = Target::Link(url);
+        let button = RECT { left: text_left, top: ty, right: text_left + px(BUTTON_W + 30.0), bottom: ty + px(CONTROL_H) };
+        let color = if hover == Some(target) { COLOR_CONTROL_HOVER } else { COLOR_CONTROL };
+        canvas.fill_shape(&button, 6.0 * dpi, color, 255);
+        SelectObject(dc, normal);
+        SetTextColor(dc, COLOR_TEXT);
+        gfx::draw_text(dc, button_label, &button, DT_CENTER);
+        targets.push((button, target));
+
+        y = card.bottom + px(16.0);
+    }
+
+    SelectObject(dc, small);
+    SetTextColor(dc, COLOR_DIM);
+    let note = "Custom UI и Dynamic Island не связаны с Apple и не используют её логотипы, шрифты, значки и обои.";
+    let note_h = wrapped_height(dc, note, right - left);
+    gfx::draw_text_wrapped(dc, note, &RECT { left, top: y, right, bottom: y + note_h });
+    y + note_h
+}
 
 unsafe fn paint(hwnd: HWND, window_dc: HDC) {
     let c = client(hwnd);
@@ -645,127 +771,133 @@ unsafe fn paint(hwnd: HWND, window_dc: HDC) {
     gfx::draw_text(dc, SECTIONS[section].1, &RECT { left, top: y, right, bottom: y + px(TITLE_H) - px(16.0) }, DT_LEFT);
     y += px(TITLE_H);
 
-    let settings: Vec<&Setting> = section_settings(section).collect();
-    let heights: Vec<i32> = settings.iter().map(|s| px(if s.hint.is_empty() { ROW } else { ROW_HINT })).collect();
-    let card = RECT { left, top: y, right, bottom: y + heights.iter().sum::<i32>() };
-    canvas.fill_shape(&card, CARD_RADIUS * dpi, COLOR_CARD, 255);
-    canvas.stroke_shape(&card, CARD_RADIUS * dpi, rgb(255, 255, 255), 14);
-    for (n, (setting, h)) in settings.iter().zip(&heights).enumerate() {
-        let row = RECT { left: card.left + px(16.0), top: y, right: card.right - px(16.0), bottom: y + h };
-        if n > 0 {
-            gfx::fill(dc, &RECT { top: row.top, bottom: row.top + 1.max(px(0.5)), ..row }, COLOR_DIVIDER);
-        }
-        let control_w = match &setting.kind {
-            Kind::Bool => TOGGLE_W,
-            Kind::Int { .. } => SLIDER_W + VALUE_W,
-            Kind::Color => (ACCENTS.len() + 1) as f32 * (SWATCH + SWATCH_GAP),
-            Kind::Choice(_) => CHOICE_W,
-            Kind::Text => FIELD_W,
-        };
-        let label_right = row.right - px(control_w + 20.0);
-        SelectObject(dc, normal);
-        SetTextColor(dc, COLOR_TEXT);
-        if setting.hint.is_empty() {
-            gfx::draw_text(dc, setting.label, &RECT { right: label_right, ..row }, DT_LEFT | DT_END_ELLIPSIS);
-        } else {
-            let mid = row.top + h / 2;
-            gfx::draw_text(dc, setting.label, &RECT { top: mid - px(20.0), bottom: mid + px(1.0), right: label_right, ..row }, DT_LEFT | DT_END_ELLIPSIS);
-            SelectObject(dc, small);
-            SetTextColor(dc, COLOR_DIM);
-            gfx::draw_text(dc, setting.hint, &RECT { top: mid + px(1.0), bottom: mid + px(19.0), right: label_right, ..row }, DT_LEFT | DT_END_ELLIPSIS);
-        }
-        let mid = row.top + h / 2;
-        let control = |width: f32, height: f32| RECT { left: row.right - px(width), top: mid - px(height) / 2, right: row.right, bottom: mid - px(height) / 2 + px(height) };
-        let visible = row.bottom > 0 && row.top < view_bottom;
-        match &setting.kind {
-            Kind::Bool => {
-                let r = control(TOGGLE_W, TOGGLE_H);
-                let on = config::flag(setting.key);
-                canvas.fill_shape(&r, TOGGLE_H * dpi / 2.0, if on { accent } else { COLOR_TOGGLE_OFF }, 255);
-                let knob = px(TOGGLE_H - 4.0);
-                let x = if on { r.right - px(2.0) - knob } else { r.left + px(2.0) };
-                let k = RECT { left: x, top: r.top + px(2.0), right: x + knob, bottom: r.top + px(2.0) + knob };
-                canvas.fill_shape(&k, knob as f32 / 2.0, rgb(255, 255, 255), 255);
-                if visible {
-                    targets.push((r, Target::Toggle(setting.key)));
-                }
+    let about = SECTIONS[section].0 == "about";
+    let page_bottom = if about {
+        paint_about(&mut canvas, (left, right, y), dpi, hover, (normal, small, bold), &mut targets)
+    } else {
+        let settings: Vec<&Setting> = section_settings(section).collect();
+        let heights: Vec<i32> = settings.iter().map(|s| px(if s.hint.is_empty() { ROW } else { ROW_HINT })).collect();
+        let card = RECT { left, top: y, right, bottom: y + heights.iter().sum::<i32>() };
+        canvas.fill_shape(&card, CARD_RADIUS * dpi, COLOR_CARD, 255);
+        canvas.stroke_shape(&card, CARD_RADIUS * dpi, rgb(255, 255, 255), 14);
+        for (n, (setting, h)) in settings.iter().zip(&heights).enumerate() {
+            let row = RECT { left: card.left + px(16.0), top: y, right: card.right - px(16.0), bottom: y + h };
+            if n > 0 {
+                gfx::fill(dc, &RECT { top: row.top, bottom: row.top + 1.max(px(0.5)), ..row }, COLOR_DIVIDER);
             }
-            Kind::Int { min, max, unit, .. } => {
-                let value = config::int(setting.key);
-                let box_ = control(SLIDER_W + VALUE_W, 22.0);
-                let track = RECT { left: box_.left + px(10.0), right: box_.left + px(SLIDER_W - 10.0), top: mid - px(2.0), bottom: mid + px(2.0) };
-                let t = (value - min) as f32 / (max - min).max(1) as f32;
-                let x = track.left + ((track.right - track.left) as f32 * t).round() as i32;
-                canvas.fill_shape(&track, 2.0 * dpi, COLOR_TOGGLE_OFF, 255);
-                canvas.fill_shape(&RECT { right: x, ..track }, 2.0 * dpi, accent, 255);
-                let knob = px(18.0);
-                let k = RECT { left: x - knob / 2, top: mid - knob / 2, right: x - knob / 2 + knob, bottom: mid - knob / 2 + knob };
-                canvas.fill_shape(&k, knob as f32 / 2.0, rgb(255, 255, 255), 255);
-                SelectObject(dc, normal);
+            let control_w = match &setting.kind {
+                Kind::Bool => TOGGLE_W,
+                Kind::Int { .. } => SLIDER_W + VALUE_W,
+                Kind::Color => (ACCENTS.len() + 1) as f32 * (SWATCH + SWATCH_GAP),
+                Kind::Choice(_) => CHOICE_W,
+                Kind::Text => FIELD_W,
+            };
+            let label_right = row.right - px(control_w + 20.0);
+            SelectObject(dc, normal);
+            SetTextColor(dc, COLOR_TEXT);
+            if setting.hint.is_empty() {
+                gfx::draw_text(dc, setting.label, &RECT { right: label_right, ..row }, DT_LEFT | DT_END_ELLIPSIS);
+            } else {
+                let mid = row.top + h / 2;
+                gfx::draw_text(dc, setting.label, &RECT { top: mid - px(20.0), bottom: mid + px(1.0), right: label_right, ..row }, DT_LEFT | DT_END_ELLIPSIS);
+                SelectObject(dc, small);
                 SetTextColor(dc, COLOR_DIM);
-                gfx::draw_text(dc, &format!("{value}{unit}"), &RECT { left: box_.right - px(VALUE_W), ..box_ }, DT_RIGHT);
-                if visible {
-                    let hit = RECT { left: track.left - px(10.0), right: track.right + px(10.0), top: box_.top, bottom: box_.bottom };
-                    targets.push((hit, Target::Slider(setting.key, track)));
-                }
+                gfx::draw_text(dc, setting.hint, &RECT { top: mid + px(1.0), bottom: mid + px(19.0), right: label_right, ..row }, DT_LEFT | DT_END_ELLIPSIS);
             }
-            Kind::Color => {
-                let current = config::text(setting.key).trim_start_matches('#').to_uppercase();
-                let count = ACCENTS.len() as f32 + 1.0;
-                let strip = control(count * SWATCH + (count - 1.0) * SWATCH_GAP, SWATCH);
-                let mut x = strip.left;
-                let custom = !ACCENTS.contains(&current.as_str());
-                for hex in ACCENTS.iter().map(|h| Some(*h)).chain([None]) {
-                    let r = RECT { left: x, top: strip.top, right: x + px(SWATCH), bottom: strip.bottom };
-                    let selected = match hex {
-                        Some(h) => h == current,
-                        None => custom,
-                    };
-                    let color = match hex {
-                        Some(h) => config::parse_color(h).map(|(r, g, b)| rgb(r, g, b)).unwrap_or(accent),
-                        None => if custom { accent } else { COLOR_CONTROL },
-                    };
-                    canvas.fill_shape(&r, SWATCH * dpi / 2.0, color, 255);
-                    if selected {
-                        let dot = gfx::centered(&r, px(8.0));
-                        canvas.fill_shape(&dot, 4.0 * dpi, rgb(255, 255, 255), 255);
-                    }
-                    if hex.is_none() && !custom {
-                        SelectObject(dc, glyphs);
-                        SetTextColor(dc, COLOR_TEXT);
-                        gfx::draw_text(dc, "\u{E710}", &r, DT_CENTER);
-                    }
+            let mid = row.top + h / 2;
+            let control = |width: f32, height: f32| RECT { left: row.right - px(width), top: mid - px(height) / 2, right: row.right, bottom: mid - px(height) / 2 + px(height) };
+            let visible = row.bottom > 0 && row.top < view_bottom;
+            match &setting.kind {
+                Kind::Bool => {
+                    let r = control(TOGGLE_W, TOGGLE_H);
+                    let on = config::flag(setting.key);
+                    canvas.fill_shape(&r, TOGGLE_H * dpi / 2.0, if on { accent } else { COLOR_TOGGLE_OFF }, 255);
+                    let knob = px(TOGGLE_H - 4.0);
+                    let x = if on { r.right - px(2.0) - knob } else { r.left + px(2.0) };
+                    let k = RECT { left: x, top: r.top + px(2.0), right: x + knob, bottom: r.top + px(2.0) + knob };
+                    canvas.fill_shape(&k, knob as f32 / 2.0, rgb(255, 255, 255), 255);
                     if visible {
-                        targets.push((r, hex.map_or(Target::CustomColor(setting.key), |h| Target::Swatch(setting.key, h))));
+                        targets.push((r, Target::Toggle(setting.key)));
                     }
-                    x += px(SWATCH + SWATCH_GAP);
+                }
+                Kind::Int { min, max, unit, .. } => {
+                    let value = config::int(setting.key);
+                    let box_ = control(SLIDER_W + VALUE_W, 22.0);
+                    let track = RECT { left: box_.left + px(10.0), right: box_.left + px(SLIDER_W - 10.0), top: mid - px(2.0), bottom: mid + px(2.0) };
+                    let t = (value - min) as f32 / (max - min).max(1) as f32;
+                    let x = track.left + ((track.right - track.left) as f32 * t).round() as i32;
+                    canvas.fill_shape(&track, 2.0 * dpi, COLOR_TOGGLE_OFF, 255);
+                    canvas.fill_shape(&RECT { right: x, ..track }, 2.0 * dpi, accent, 255);
+                    let knob = px(18.0);
+                    let k = RECT { left: x - knob / 2, top: mid - knob / 2, right: x - knob / 2 + knob, bottom: mid - knob / 2 + knob };
+                    canvas.fill_shape(&k, knob as f32 / 2.0, rgb(255, 255, 255), 255);
+                    SelectObject(dc, normal);
+                    SetTextColor(dc, COLOR_DIM);
+                    gfx::draw_text(dc, &format!("{value}{unit}"), &RECT { left: box_.right - px(VALUE_W), ..box_ }, DT_RIGHT);
+                    if visible {
+                        let hit = RECT { left: track.left - px(10.0), right: track.right + px(10.0), top: box_.top, bottom: box_.bottom };
+                        targets.push((hit, Target::Slider(setting.key, track)));
+                    }
+                }
+                Kind::Color => {
+                    let current = config::text(setting.key).trim_start_matches('#').to_uppercase();
+                    let count = ACCENTS.len() as f32 + 1.0;
+                    let strip = control(count * SWATCH + (count - 1.0) * SWATCH_GAP, SWATCH);
+                    let mut x = strip.left;
+                    let custom = !ACCENTS.contains(&current.as_str());
+                    for hex in ACCENTS.iter().map(|h| Some(*h)).chain([None]) {
+                        let r = RECT { left: x, top: strip.top, right: x + px(SWATCH), bottom: strip.bottom };
+                        let selected = match hex {
+                            Some(h) => h == current,
+                            None => custom,
+                        };
+                        let color = match hex {
+                            Some(h) => config::parse_color(h).map(|(r, g, b)| rgb(r, g, b)).unwrap_or(accent),
+                            None => if custom { accent } else { COLOR_CONTROL },
+                        };
+                        canvas.fill_shape(&r, SWATCH * dpi / 2.0, color, 255);
+                        if selected {
+                            let dot = gfx::centered(&r, px(8.0));
+                            canvas.fill_shape(&dot, 4.0 * dpi, rgb(255, 255, 255), 255);
+                        }
+                        if hex.is_none() && !custom {
+                            SelectObject(dc, glyphs);
+                            SetTextColor(dc, COLOR_TEXT);
+                            gfx::draw_text(dc, "\u{E710}", &r, DT_CENTER);
+                        }
+                        if visible {
+                            targets.push((r, hex.map_or(Target::CustomColor(setting.key), |h| Target::Swatch(setting.key, h))));
+                        }
+                        x += px(SWATCH + SWATCH_GAP);
+                    }
+                }
+                Kind::Choice(options) => {
+                    let r = control(CHOICE_W, CONTROL_H);
+                    let current = config::text(setting.key);
+                    let label = options.iter().find(|(v, _)| *v == current).map_or(current.as_str(), |(_, l)| l);
+                    let hot = matches!(hover, Some(Target::Choice(k, _)) if k == setting.key);
+                    canvas.fill_shape(&r, 6.0 * dpi, if hot { COLOR_CONTROL_HOVER } else { COLOR_CONTROL }, 255);
+                    SelectObject(dc, normal);
+                    SetTextColor(dc, COLOR_TEXT);
+                    gfx::draw_text(dc, label, &RECT { left: r.left + px(10.0), right: r.right - px(28.0), ..r }, DT_LEFT | DT_END_ELLIPSIS);
+                    SelectObject(dc, glyphs);
+                    gfx::draw_text(dc, "\u{E70D}", &RECT { left: r.right - px(26.0), right: r.right - px(8.0), ..r }, DT_CENTER);
+                    if visible {
+                        targets.push((r, Target::Choice(setting.key, r)));
+                    }
+                }
+                Kind::Text => {
+                    let r = control(FIELD_W, CONTROL_H);
+                    canvas.fill_shape(&r, 6.0 * dpi, COLOR_FIELD, 255);
+                    let inner = RECT { left: r.left + px(8.0), top: mid - px(9.0), right: r.right - px(8.0), bottom: mid + px(9.0) };
+                    edit_spots.push((setting.key, inner, r.top >= 0 && r.bottom <= view_bottom));
                 }
             }
-            Kind::Choice(options) => {
-                let r = control(CHOICE_W, CONTROL_H);
-                let current = config::text(setting.key);
-                let label = options.iter().find(|(v, _)| *v == current).map_or(current.as_str(), |(_, l)| l);
-                let hot = matches!(hover, Some(Target::Choice(k, _)) if k == setting.key);
-                canvas.fill_shape(&r, 6.0 * dpi, if hot { COLOR_CONTROL_HOVER } else { COLOR_CONTROL }, 255);
-                SelectObject(dc, normal);
-                SetTextColor(dc, COLOR_TEXT);
-                gfx::draw_text(dc, label, &RECT { left: r.left + px(10.0), right: r.right - px(28.0), ..r }, DT_LEFT | DT_END_ELLIPSIS);
-                SelectObject(dc, glyphs);
-                gfx::draw_text(dc, "\u{E70D}", &RECT { left: r.right - px(26.0), right: r.right - px(8.0), ..r }, DT_CENTER);
-                if visible {
-                    targets.push((r, Target::Choice(setting.key, r)));
-                }
-            }
-            Kind::Text => {
-                let r = control(FIELD_W, CONTROL_H);
-                canvas.fill_shape(&r, 6.0 * dpi, COLOR_FIELD, 255);
-                let inner = RECT { left: r.left + px(8.0), top: mid - px(9.0), right: r.right - px(8.0), bottom: mid + px(9.0) };
-                edit_spots.push((setting.key, inner, r.top >= 0 && r.bottom <= view_bottom));
-            }
+            y += h;
         }
-        y += h;
-    }
-    let content_height = card.bottom + scroll + px(PAD);
+        card.bottom
+    };
+    let content_height = page_bottom + scroll + px(PAD);
 
     // Footer: shell status and power on the left, reset and apply on the right.
     let footer = RECT { left: content.left, top: view_bottom, ..c };
@@ -783,19 +915,25 @@ unsafe fn paint(hwnd: HWND, window_dc: HDC) {
         canvas.fill_shape(r, 6.0 * dpi, color, 255);
     };
     draw_button(&mut canvas, &apply, Target::Apply, apply_color);
-    draw_button(&mut canvas, &reset, Target::Reset, COLOR_CONTROL);
+    if !about {
+        draw_button(&mut canvas, &reset, Target::Reset, COLOR_CONTROL);
+    }
     draw_button(&mut canvas, &power, Target::ShellPower, COLOR_CONTROL);
     SelectObject(dc, normal);
     SetTextColor(dc, COLOR_TEXT);
     gfx::draw_text(dc, "Применить", &apply, DT_CENTER);
-    gfx::draw_text(dc, "Сбросить раздел", &reset, DT_CENTER);
+    if !about {
+        gfx::draw_text(dc, "Сбросить раздел", &reset, DT_CENTER);
+    }
     gfx::draw_text(dc, if running { "Вернуться к Windows" } else { "Запустить оболочку" }, &power, DT_CENTER);
     SelectObject(dc, small);
     SetTextColor(dc, COLOR_DIM);
     let note = if dirty { "Есть неприменённые изменения".to_owned() } else { status };
     gfx::draw_text(dc, &note, &RECT { left: power.right + px(14.0), right: reset.left - px(10.0), ..footer }, DT_LEFT | DT_END_ELLIPSIS | DT_WORDBREAK);
     targets.push((apply, Target::Apply));
-    targets.push((reset, Target::Reset));
+    if !about {
+        targets.push((reset, Target::Reset));
+    }
     targets.push((power, Target::ShellPower));
     SelectObject(dc, old_font);
 
