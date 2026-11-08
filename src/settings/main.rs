@@ -585,6 +585,16 @@ unsafe fn on_down(hwnd: HWND, p: POINT) {
 
 const REPO_URL: &str = env!("CARGO_PKG_REPOSITORY");
 const ISLAND_URL: &str = "https://github.com/sergey1029/dynamic-island-windows";
+/// A friend's fork of Coucou, focused on Windows.
+const COUCOU_URL: &str = "https://github.com/Disa153/coucou";
+
+/// The picture on an "О программе" card.
+#[derive(Clone, Copy, PartialEq)]
+enum Tile {
+    Shell,
+    Island,
+    Coucou,
+}
 
 fn open_url(url: &str) {
     let wide: Vec<u16> = url.encode_utf16().chain([0]).collect();
@@ -603,8 +613,8 @@ unsafe fn wrapped_height(dc: HDC, text: &str, width: i32) -> i32 {
     r.bottom
 }
 
-/// "О программе": Custom UI itself, and Dynamic Island, the notch app that goes
-/// with it. Returns the bottom of the page.
+/// "О программе": Custom UI itself and the two apps for the middle of its menu bar,
+/// Dynamic Island and Coucou. Returns the bottom of the page.
 unsafe fn paint_about(
     canvas: &mut Canvas,
     (left, right, mut y): (i32, i32, i32),
@@ -622,10 +632,16 @@ unsafe fn paint_about(
         (true, _) => "Запущен; чтобы встроить его в строку меню, выберите его в «Строка меню ▸ Остров посередине»",
         (false, _) => "Не запущен",
     };
+    let coucou_running = FindWindowW(None, w!("Coucou")).is_ok();
+    let coucou_status = match (coucou_running, config::text("menubar.island").as_str()) {
+        (true, "coucou") => "Запущен, пузырь стоит в вырезе строки меню",
+        (true, _) => "Запущен; чтобы пузырь встал в вырез, выберите Coucou в «Строка меню ▸ Остров посередине»",
+        (false, _) => "Не запущен",
+    };
     let version = concat!("Версия ", env!("CARGO_PKG_VERSION"), " · бесплатно, лицензия MIT");
-    let blocks: [(bool, &str, &str, &str, &str, &'static str); 2] = [
+    let blocks: [(Tile, &str, &str, &str, &str, &'static str); 3] = [
         (
-            true,
+            Tile::Shell,
             "Custom UI",
             version,
             "Оболочка для Windows 11 в стиле macOS: строка меню, Dock, Spotlight, Launchpad, Пункт управления, \
@@ -634,7 +650,7 @@ unsafe fn paint_about(
             REPO_URL,
         ),
         (
-            false,
+            Tile::Island,
             "Dynamic Island",
             island_status,
             "Отдельная бесплатная программа того же автора, которая хорошо сочетается с Custom UI: живая «пилюля» \
@@ -644,11 +660,22 @@ unsafe fn paint_about(
             "Скачать с GitHub",
             ISLAND_URL,
         ),
+        (
+            Tile::Coucou,
+            "Coucou",
+            coucou_status,
+            "Форк Coucou от Disa153 с упором на Windows: маленький помощник вверху экрана, который следит за ИИ-агентами \
+             (Claude Code, Codex, Cursor, Gemini CLI и другими). Показывает, что агент читает, правит и запускает, даёт \
+             разрешить или запретить действие одним кликом, а приложение для iPhone связывается с ним по Wi-Fi. \
+             Оригинальный Coucou создал Louis Raillé; форк неофициальный. В Custom UI для него есть вырез в строке меню.",
+            "Открыть на GitHub",
+            COUCOU_URL,
+        ),
     ];
 
     let pad = px(18.0);
     let icon = px(48.0);
-    for (is_shell, name, sub, body, button_label, url) in blocks {
+    for (tile_kind, name, sub, body, button_label, url) in blocks {
         let text_left = left + pad + icon + px(16.0);
         let text_right = right - pad;
         SelectObject(dc, normal);
@@ -659,12 +686,21 @@ unsafe fn paint_about(
         canvas.stroke_shape(&card, CARD_RADIUS * dpi, rgb(255, 255, 255), 14);
 
         let tile = RECT { left: left + pad, top: y + pad, right: left + pad + icon, bottom: y + pad + icon };
-        if is_shell {
+        if tile_kind == Tile::Shell {
             let instance = GetModuleHandleW(None).unwrap_or_default();
             if let Ok(image) = LoadImageW(instance, APP_ICON, IMAGE_ICON, icon, icon, LR_DEFAULTCOLOR) {
                 let _ = DrawIconEx(dc, tile.left, tile.top, HICON(image.0), icon, icon, 0, None, DI_NORMAL);
                 let _ = DestroyIcon(HICON(image.0));
             }
+        } else if tile_kind == Tile::Coucou {
+            // Our own picture (Coucou's character and icon belong to its author): a robot on a warm tile.
+            canvas.fill_shape(&tile, 11.0 * dpi, rgb(255, 122, 89), 255);
+            SetTextColor(dc, rgb(255, 255, 255));
+            let big = gfx::create_font(-px(24.0), FW_NORMAL, w!("Segoe Fluent Icons"));
+            let old = SelectObject(dc, big);
+            gfx::draw_text(dc, "\u{E99A}", &tile, DT_CENTER);
+            SelectObject(dc, old);
+            let _ = DeleteObject(big);
         } else {
             // The island itself: a black pill on an indigo tile.
             canvas.fill_shape(&tile, 11.0 * dpi, rgb(94, 92, 230), 255);
